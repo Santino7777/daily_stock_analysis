@@ -120,7 +120,7 @@ class MarketAnalyzer:
         self._get_sector_rankings(overview)
         
         # 4. 获取北向资金（可选）
-        # self._get_north_flow(overview)
+        self._get_north_flow(overview)
         
         return overview
 
