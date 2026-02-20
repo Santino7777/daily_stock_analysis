@@ -26,6 +26,11 @@
 5. BaostockFetcher (Priority 3) - 来自 baostock 库
 6. YfinanceFetcher (Priority 4) - 来自 yfinance 库
 
+【美股（纯字母 ticker，如 AAPL、MSFT、META、BMNR、CIFR、BRK.B、BRK-B）】
+自动路由：DataFetcherManager 识别到美股 ticker 后，优先使用 YfinanceFetcher，
+其余数据源作为降级备选。无需手动设置 YFINANCE_PRIORITY=0。
+高级用户仍可通过 YFINANCE_PRIORITY 环境变量调整全局优先级。
+
 提示：优先级数字越小越优先，同优先级按初始化顺序排列
 """
 
