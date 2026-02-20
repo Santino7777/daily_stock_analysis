@@ -900,6 +900,64 @@ class SearchService:
         "{name} technical analysis",
         "{name} {code} performance volume",
     ]
+
+    # 事件多维度搜索模板（A股 中文）
+    EVENT_DIMENSIONS_CN: List[Dict[str, str]] = [
+        {
+            "name": "earnings",
+            "query": "{name} 业绩预告 财报 营收 净利润 同比增长",
+            "desc": "📊 业绩动态",
+        },
+        {
+            "name": "insider",
+            "query": "{name} 增减持 大股东减持 高管变动 股权变动",
+            "desc": "👤 内部人动向",
+        },
+        {
+            "name": "risk",
+            "query": "{name} 处罚 违规 诉讼 风险预警 利空",
+            "desc": "⚠️ 风险排查",
+        },
+        {
+            "name": "regulatory",
+            "query": "{name} 监管 政策 合规 行业规定 调查",
+            "desc": "🏛️ 监管政策",
+        },
+        {
+            "name": "corporate",
+            "query": "{name} 重组 并购 分红 增发 配股 股权激励",
+            "desc": "🏢 公司行动",
+        },
+    ]
+
+    # 事件多维度搜索模板（港股/美股 英文）
+    EVENT_DIMENSIONS_EN: List[Dict[str, str]] = [
+        {
+            "name": "earnings",
+            "query": "{name} earnings report quarterly results revenue profit forecast",
+            "desc": "📊 Earnings",
+        },
+        {
+            "name": "insider",
+            "query": "{name} insider trading insider selling stock buyback executive change",
+            "desc": "👤 Insider Activity",
+        },
+        {
+            "name": "risk",
+            "query": "{name} litigation lawsuit SEC investigation risk warning",
+            "desc": "⚠️ Risk / Legal",
+        },
+        {
+            "name": "regulatory",
+            "query": "{name} regulation compliance policy government investigation",
+            "desc": "🏛️ Regulatory",
+        },
+        {
+            "name": "corporate",
+            "query": "{name} merger acquisition dividend stock split restructuring",
+            "desc": "🏢 Corporate Actions",
+        },
+    ]
     
     def __init__(
         self,
@@ -1083,50 +1141,209 @@ class SearchService:
         self,
         stock_code: str,
         stock_name: str,
-        event_types: Optional[List[str]] = None
+        event_types: Optional[List[str]] = None,
     ) -> SearchResponse:
         """
-        搜索股票特定事件（年报预告、减持等）
-        
-        专门针对交易决策相关的重要事件进行搜索
-        
+        搜索股票特定事件（年报预告、减持等）。
+
+        当 ``event_types`` 为 ``None`` 时，自动按多维度（业绩/内部人动向/风险/监管/公司行动）
+        分别执行子查询并聚合去重结果，避免单一 OR 查询导致信息偏窄。
+        当 ``event_types`` 被显式指定时，沿用旧的 OR 拼接单查询行为（向后兼容）。
+
         Args:
-            stock_code: 股票代码
-            stock_name: 股票名称
-            event_types: 事件类型列表
-            
+            stock_code: 股票代码（如 ``600519``、``AAPL``、``hk00700``）。
+            stock_name: 股票名称（如 ``贵州茅台``、``Apple``）。
+            event_types: 事件类型关键词列表。``None`` 表示使用内置多维度模板；
+                         显式传入列表时退化为单 OR 查询（兼容旧调用）。
+
         Returns:
-            SearchResponse 对象
+            聚合后的 :class:`SearchResponse` 对象（去重合并所有维度结果）。
+            旧调用方无需修改即可获得更丰富的多维度事件信息。
         """
-        if event_types is None:
-            if self._is_foreign_stock(stock_code):
-                event_types = ["earnings report", "insider selling", "quarterly results"]
-            else:
-                event_types = ["年报预告", "减持公告", "业绩快报"]
-        
-        # 构建针对性查询
-        event_query = " OR ".join(event_types)
-        query = f"{stock_name} ({event_query})"
-        
-        logger.info(f"搜索股票事件: {stock_name}({stock_code}) - {event_types}")
-        
-        # 依次尝试各个搜索引擎
-        for provider in self._providers:
-            if not provider.is_available:
-                continue
-            
-            response = provider.search(query, max_results=5)
-            
-            if response.success:
-                return response
-        
+        # ── 旧行为（向后兼容）: 显式指定 event_types 时使用单 OR 查询 ──────────
+        if event_types is not None:
+            event_query = " OR ".join(event_types)
+            query = f"{stock_name} ({event_query})"
+            logger.info(f"搜索股票事件(单查询): {stock_name}({stock_code}) - {event_types}")
+            for provider in self._providers:
+                if not provider.is_available:
+                    continue
+                response = provider.search(query, max_results=5)
+                if response.success:
+                    return response
+            return SearchResponse(
+                query=query,
+                results=[],
+                provider="None",
+                success=False,
+                error_message="事件搜索失败",
+            )
+
+        # ── 新行为: event_types=None 时执行多维度搜索并聚合 ─────────────────────
+        logger.info(f"搜索股票事件(多维度): {stock_name}({stock_code})")
+        dim_results = self.search_stock_events_by_dimension(stock_code, stock_name, max_results_per_dim=3)
+
+        # 聚合去重
+        all_results: List[SearchResult] = []
+        seen_urls: set = set()
+        successful_providers: List[str] = []
+
+        for resp in dim_results.values():
+            if resp.success and resp.results:
+                if resp.provider not in successful_providers:
+                    successful_providers.append(resp.provider)
+                for r in resp.results:
+                    key = r.url if r.url else f"{r.title}|{r.snippet[:40]}"
+                    if key not in seen_urls:
+                        seen_urls.add(key)
+                        all_results.append(r)
+
+        provider_str = ", ".join(successful_providers) if successful_providers else "None"
+        aggregated_query = f"{stock_name}({stock_code}) 多维度事件"
+
+        if all_results:
+            logger.info(
+                f"[事件搜索] 多维度聚合完成，共 {len(all_results)} 条去重结果，维度={list(dim_results.keys())}"
+            )
+            return SearchResponse(
+                query=aggregated_query,
+                results=all_results,
+                provider=provider_str,
+                success=True,
+            )
+
+        logger.warning(f"[事件搜索] 多维度搜索均未返回结果: {stock_name}({stock_code})")
         return SearchResponse(
-            query=query,
+            query=aggregated_query,
             results=[],
             provider="None",
             success=False,
-            error_message="事件搜索失败"
+            error_message="多维度事件搜索未找到相关信息",
         )
+
+    def search_stock_events_by_dimension(
+        self,
+        stock_code: str,
+        stock_name: str,
+        max_results_per_dim: int = 3,
+        sleep_between_dims: float = 0.5,
+        max_dims: Optional[int] = None,
+    ) -> Dict[str, SearchResponse]:
+        """
+        按维度拆分事件搜索，返回每个维度独立的搜索结果。
+
+        适用于需要"多维度呈现"的上层调用，可清楚看到每个维度（业绩/内部人/风险/
+        监管/公司行动）的原始结果与来源。轮流使用已配置的搜索引擎，控制搜索频率。
+
+        Args:
+            stock_code: 股票代码。
+            stock_name: 股票名称。
+            max_results_per_dim: 每个维度最多返回的搜索结果数（默认 3）。
+            sleep_between_dims: 维度间的暂停时长（秒，默认 0.5），控制速率。
+            max_dims: 最多执行的维度数量。``None`` 表示使用全部维度（5 个）。
+
+        Returns:
+            ``{维度名称: SearchResponse}`` 字典，维度名称取自 ``EVENT_DIMENSIONS_*``
+            中的 ``name`` 字段（如 ``'earnings'``、``'insider'``、``'risk'`` 等）。
+
+        Example::
+
+            svc = SearchService(bocha_keys=["your-key"])
+            results = svc.search_stock_events_by_dimension("600519", "贵州茅台")
+            report = svc.format_events_report(results, "贵州茅台")
+            print(report)
+        """
+        is_foreign = self._is_foreign_stock(stock_code)
+        dimensions = self.EVENT_DIMENSIONS_EN if is_foreign else self.EVENT_DIMENSIONS_CN
+
+        if max_dims is not None:
+            dimensions = dimensions[:max_dims]
+
+        available_providers = [p for p in self._providers if p.is_available]
+        if not available_providers:
+            logger.warning(f"[事件多维度搜索] 无可用搜索引擎: {stock_name}({stock_code})")
+            return {
+                dim["name"]: SearchResponse(
+                    query=dim["query"].format(name=stock_name),
+                    results=[],
+                    provider="None",
+                    success=False,
+                    error_message="无可用搜索引擎",
+                )
+                for dim in dimensions
+            }
+
+        results: Dict[str, SearchResponse] = {}
+        logger.info(
+            f"[事件多维度搜索] 开始: {stock_name}({stock_code}), 维度数={len(dimensions)}, "
+            f"每维度最多 {max_results_per_dim} 条"
+        )
+
+        for idx, dim in enumerate(dimensions):
+            query = dim["query"].format(name=stock_name)
+            # 轮流使用不同搜索引擎，分散请求
+            provider = available_providers[idx % len(available_providers)]
+
+            logger.info(f"[事件多维度搜索] {dim['desc']} (provider={provider.name}): {query}")
+            response = provider.search(query, max_results=max_results_per_dim)
+            results[dim["name"]] = response
+
+            if response.success:
+                logger.info(f"[事件多维度搜索] {dim['desc']}: 获取 {len(response.results)} 条结果")
+            else:
+                logger.warning(f"[事件多维度搜索] {dim['desc']}: 失败 - {response.error_message}")
+
+            # 维度间短暂暂停，避免触发速率限制
+            if idx < len(dimensions) - 1:
+                time.sleep(sleep_between_dims)
+
+        return results
+
+    def format_events_report(
+        self,
+        dim_results: Dict[str, SearchResponse],
+        stock_name: str,
+        max_results_per_dim: int = 3,
+    ) -> str:
+        """
+        将多维度事件搜索结果格式化为可读报告。
+
+        Args:
+            dim_results: :meth:`search_stock_events_by_dimension` 返回的字典。
+            stock_name: 股票名称，用于报告标题。
+            max_results_per_dim: 每个维度最多展示的条目数（默认 3）。
+
+        Returns:
+            格式化的多维度事件报告文本，可直接用于 AI 分析或日志输出。
+
+        Example::
+
+            svc = SearchService(bocha_keys=["your-key"])
+            results = svc.search_stock_events_by_dimension("600519", "贵州茅台")
+            print(svc.format_events_report(results, "贵州茅台"))
+        """
+        # 合并 CN/EN 维度描述映射
+        desc_map: Dict[str, str] = {
+            dim["name"]: dim["desc"]
+            for dim in (self.EVENT_DIMENSIONS_CN + self.EVENT_DIMENSIONS_EN)
+        }
+
+        lines = [f"【{stock_name} 多维度事件报告】"]
+
+        for dim_name, resp in dim_results.items():
+            dim_desc = desc_map.get(dim_name, dim_name)
+            lines.append(f"\n{dim_desc} (来源: {resp.provider}):")
+
+            if resp.success and resp.results:
+                for i, r in enumerate(resp.results[:max_results_per_dim], 1):
+                    date_str = f" [{r.published_date}]" if r.published_date else ""
+                    lines.append(f"  {i}. {r.title}{date_str}")
+                    snippet = r.snippet[:150] if len(r.snippet) > 20 else r.snippet
+                    lines.append(f"     {snippet}...")
+            else:
+                lines.append("  未找到相关信息")
+
+        return "\n".join(lines)
     
     def search_comprehensive_intel(
         self,
@@ -1545,5 +1762,16 @@ if __name__ == "__main__":
         print(f"结果数量: {len(response.results)}")
         print(f"耗时: {response.search_time:.2f}s")
         print("\n" + response.to_context())
+
+        print("\n=== 测试多维度事件搜索 (event_types=None) ===")
+        event_response = service.search_stock_events("600519", "贵州茅台")
+        print(f"搜索状态: {'成功' if event_response.success else '失败'}")
+        print(f"搜索引擎: {event_response.provider}")
+        print(f"结果数量: {len(event_response.results)}")
+
+        print("\n=== 测试按维度搜索并格式化报告 ===")
+        dim_results = service.search_stock_events_by_dimension("600519", "贵州茅台")
+        print(f"返回维度: {list(dim_results.keys())}")
+        print(service.format_events_report(dim_results, "贵州茅台"))
     else:
         print("未配置搜索引擎 API Key，跳过测试")
