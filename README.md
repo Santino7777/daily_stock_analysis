@@ -118,6 +118,7 @@
 | `SERPAPI_API_KEYS` | [SerpAPI](https://serpapi.com/baidu-search-api?utm_source=github_daily_stock_analysis) 全渠道搜索 | 可选 |
 | `BOCHA_API_KEYS` | [博查搜索](https://open.bocha.cn/) Web Search API（中文搜索优化，支持AI摘要，多个key用逗号分隔） | 可选 |
 | `BRAVE_API_KEYS` | [Brave Search](https://brave.com/search/api/) API（隐私优先，美股优化，多个key用逗号分隔） | 可选 |
+| `NEWS_PROVIDER` | 搜索引擎选择策略：`auto`（默认，按优先级 Bocha→Tavily→Brave→SerpAPI 自动切换，每次仅调用一个）或指定 `bocha`/`tavily`/`brave`/`serpapi` 固定使用某一引擎 | 可选 |
 | `TUSHARE_TOKEN` | [Tushare Pro](https://tushare.pro/weborder/#/login?reg=834638 ) Token | 可选 |
 | `WECHAT_MSG_TYPE` | 企微消息类型，默认 markdown，支持配置 text 类型，发送纯 markdown 文本 | 可选 |
 

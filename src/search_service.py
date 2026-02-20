@@ -907,6 +907,7 @@ class SearchService:
         tavily_keys: Optional[List[str]] = None,
         brave_keys: Optional[List[str]] = None,
         serpapi_keys: Optional[List[str]] = None,
+        news_provider: str = "auto",
     ):
         """
         初始化搜索服务
@@ -916,8 +917,14 @@ class SearchService:
             tavily_keys: Tavily API Key 列表
             brave_keys: Brave Search API Key 列表
             serpapi_keys: SerpAPI Key 列表
+            news_provider: Active search provider strategy.
+                "auto" (default): try providers in priority order with fallback
+                (Bocha → Tavily → Brave → SerpAPI) — stops at the first successful result.
+                Named value (e.g. "tavily", "serpapi", "bocha", "brave"): use ONLY that
+                provider; falls back to auto mode with a warning if it is not configured.
         """
         self._providers: List[BaseSearchProvider] = []
+        self._news_provider: str = news_provider.strip().lower()
 
         # 初始化搜索引擎（按优先级排序）
         # 1. Bocha 优先（中文搜索优化，AI摘要）
@@ -942,6 +949,21 @@ class SearchService:
         
         if not self._providers:
             logger.warning("未配置任何搜索引擎 API Key，新闻搜索功能将不可用")
+        elif self._news_provider == "auto":
+            provider_names = [p.name for p in self._providers]
+            logger.info(
+                f"Search provider strategy: auto (priority fallback order: {' → '.join(provider_names)}). "
+                f"Only the first successful provider is used per query — no duplicate calls."
+            )
+        else:
+            if any(p.name.lower() == self._news_provider for p in self._providers):
+                logger.info(f"Search provider strategy: explicit '{self._news_provider}' (no fallback to other providers)")
+            else:
+                configured_names = [p.name for p in self._providers]
+                logger.warning(
+                    f"NEWS_PROVIDER='{self._news_provider}' is set but this provider is not configured. "
+                    f"Falling back to auto mode. Configured providers: {configured_names}"
+                )
 
         # In-memory search result cache: {cache_key: (timestamp, SearchResponse)}
         self._cache: Dict[str, Tuple[float, 'SearchResponse']] = {}
@@ -968,6 +990,38 @@ class SearchService:
     def is_available(self) -> bool:
         """检查是否有可用的搜索引擎"""
         return any(p.is_available for p in self._providers)
+
+    def _get_providers_for_search(self) -> List[BaseSearchProvider]:
+        """
+        Return the ordered list of providers to use for a single search query.
+
+        Behaviour depends on ``news_provider`` (set at construction time):
+
+        * ``"auto"`` — return all available providers in priority order
+          (Bocha → Tavily → Brave → SerpAPI).  Callers iterate this list and
+          stop at the **first** successful result, so only one provider is
+          actually called per query.
+        * Named provider (e.g. ``"tavily"``) — return only that provider if it
+          is configured and available.  If it is not, log a warning and fall
+          back to auto mode so queries are never silently dropped.
+        """
+        available = [p for p in self._providers if p.is_available]
+
+        if self._news_provider == "auto":
+            return available
+
+        # Explicit provider requested
+        named = [p for p in available if p.name.lower() == self._news_provider]
+        if named:
+            return named
+
+        # Named provider not configured/unavailable — warn and fall back
+        logger.warning(
+            f"NEWS_PROVIDER='{self._news_provider}' is not configured or unavailable. "
+            f"Falling back to auto mode (available: {[p.name for p in available]})"
+        )
+        return available
+
 
     def _cache_key(self, query: str, max_results: int, days: int) -> str:
         """Build a cache key from query parameters."""
@@ -1056,8 +1110,8 @@ class SearchService:
             logger.info(f"使用缓存搜索结果: {stock_name}({stock_code})")
             return cached
 
-        # 依次尝试各个搜索引擎
-        for provider in self._providers:
+        # Try providers in order determined by news_provider strategy
+        for provider in self._get_providers_for_search():
             if not provider.is_available:
                 continue
             
@@ -1110,8 +1164,8 @@ class SearchService:
         
         logger.info(f"搜索股票事件: {stock_name}({stock_code}) - {event_types}")
         
-        # 依次尝试各个搜索引擎
-        for provider in self._providers:
+        # Try providers in order determined by news_provider strategy
+        for provider in self._get_providers_for_search():
             if not provider.is_available:
                 continue
             
@@ -1516,6 +1570,7 @@ def get_search_service() -> SearchService:
             tavily_keys=config.tavily_api_keys,
             brave_keys=config.brave_api_keys,
             serpapi_keys=config.serpapi_keys,
+            news_provider=config.news_provider,
         )
     
     return _search_service

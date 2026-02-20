@@ -81,6 +81,11 @@ class Config:
     tavily_api_keys: List[str] = field(default_factory=list)  # Tavily API Keys
     brave_api_keys: List[str] = field(default_factory=list)  # Brave Search API Keys
     serpapi_keys: List[str] = field(default_factory=list)  # SerpAPI Keys
+    # Explicit news search provider selection.
+    # "auto" (default): use providers in priority order with fallback (Bocha → Tavily → Brave → SerpAPI).
+    # Named value (e.g. "tavily", "serpapi", "bocha", "brave"): use only that provider; falls back to
+    # auto mode with a warning if the named provider is not configured or unavailable.
+    news_provider: str = "auto"
     
     # === 通知配置（可同时配置多个，全部推送）===
     
@@ -366,6 +371,7 @@ class Config:
             tavily_api_keys=tavily_api_keys,
             brave_api_keys=brave_api_keys,
             serpapi_keys=serpapi_keys,
+            news_provider=os.getenv('NEWS_PROVIDER', 'auto').strip().lower(),
             wechat_webhook_url=os.getenv('WECHAT_WEBHOOK_URL'),
             feishu_webhook_url=os.getenv('FEISHU_WEBHOOK_URL'),
             telegram_bot_token=os.getenv('TELEGRAM_BOT_TOKEN'),
@@ -565,6 +571,24 @@ class Config:
         
         if not self.bocha_api_keys and not self.tavily_api_keys and not self.brave_api_keys and not self.serpapi_keys:
             warnings.append("提示：未配置搜索引擎 API Key (Bocha/Tavily/Brave/SerpAPI)，新闻搜索功能将不可用")
+        elif self.news_provider != "auto":
+            # Validate that the explicitly named provider is actually configured
+            provider_key_map = {
+                "bocha": self.bocha_api_keys,
+                "tavily": self.tavily_api_keys,
+                "brave": self.brave_api_keys,
+                "serpapi": self.serpapi_keys,
+            }
+            if self.news_provider not in provider_key_map:
+                warnings.append(
+                    f"警告：NEWS_PROVIDER='{self.news_provider}' 不是有效值，"
+                    f"有效值为: auto, bocha, tavily, brave, serpapi"
+                )
+            elif not provider_key_map[self.news_provider]:
+                warnings.append(
+                    f"警告：NEWS_PROVIDER='{self.news_provider}' 已设置，但对应的 API Key 未配置，"
+                    f"将自动回退到 auto 模式"
+                )
         
         # 检查通知配置
         has_notification = (
