@@ -420,9 +420,22 @@ class DataFetcherManager:
         # Normalize code (strip SH/SZ prefix etc.)
         stock_code = normalize_stock_code(stock_code)
 
+        # For US stocks, automatically try YfinanceFetcher first regardless of
+        # its configured priority, so that US tickers always use the best-fit
+        # data source without requiring the user to set YFINANCE_PRIORITY=0.
+        from .akshare_fetcher import _is_us_code
+        if _is_us_code(stock_code):
+            yf_fetchers = [f for f in self._fetchers if f.name == "YfinanceFetcher"]
+            other_fetchers = [f for f in self._fetchers if f.name != "YfinanceFetcher"]
+            fetchers_to_try = yf_fetchers + other_fetchers
+            if yf_fetchers:
+                logger.info(f"[美股路由] {stock_code} 识别为美股，优先使用 YfinanceFetcher")
+        else:
+            fetchers_to_try = self._fetchers
+
         errors = []
         
-        for fetcher in self._fetchers:
+        for fetcher in fetchers_to_try:
             try:
                 logger.info(f"尝试使用 [{fetcher.name}] 获取 {stock_code}...")
                 df = fetcher.get_daily_data(

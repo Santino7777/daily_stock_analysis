@@ -140,13 +140,13 @@ def _is_etf_code(stock_code: str) -> bool:
 def _is_us_code(stock_code: str) -> bool:
     """
     判断代码是否为美股
-    
+
     美股代码规则：
     - 1-5个大写字母，如 'AAPL', 'TSLA'
-    - 可能包含 '.'，如 'BRK.B'
+    - 可能包含 '.' 或 '-'，如 'BRK.B'、'BRK-B'
     """
     code = stock_code.strip().upper()
-    return bool(re.match(r'^[A-Z]{1,5}(\.[A-Z])?$', code))
+    return bool(re.match(r'^[A-Z]{1,5}([.\-][A-Z]{1,2})?$', code))
 
 
 class EfinanceFetcher(BaseFetcher):

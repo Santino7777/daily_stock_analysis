@@ -133,7 +133,7 @@ def _is_us_code(stock_code: str) -> bool:
 
     美股代码规则：
     - 1-5个大写字母，如 'AAPL' (苹果), 'TSLA' (特斯拉)
-    - 可能包含 '.' 用于特殊股票类别，如 'BRK.B' (伯克希尔B类股)
+    - 可能包含 '.' 或 '-' 用于特殊股票类别，如 'BRK.B'、'BRK-B' (伯克希尔B类股)
 
     Args:
         stock_code: 股票代码
@@ -148,6 +148,8 @@ def _is_us_code(stock_code: str) -> bool:
         True
         >>> _is_us_code('BRK.B')
         True
+        >>> _is_us_code('BRK-B')
+        True
         >>> _is_us_code('600519')
         False
         >>> _is_us_code('hk00700')
@@ -155,8 +157,8 @@ def _is_us_code(stock_code: str) -> bool:
     """
     import re
     code = stock_code.strip().upper()
-    # 美股：1-5个大写字母，可能包含一个点和字母（如 BRK.B）
-    return bool(re.match(r'^[A-Z]{1,5}(\.[A-Z])?$', code))
+    # 美股：1-5个大写字母，可能包含 '.' 或 '-' 后接1-2个字母（如 BRK.B、BRK-B）
+    return bool(re.match(r'^[A-Z]{1,5}([.\-][A-Z]{1,2})?$', code))
 
 
 class AkshareFetcher(BaseFetcher):

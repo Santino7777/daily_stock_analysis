@@ -88,8 +88,8 @@ class YfinanceFetcher(BaseFetcher):
 
         code = stock_code.strip().upper()
 
-        # 美股：1-5个大写字母（可能包含 .），直接返回
-        if re.match(r'^[A-Z]{1,5}(\.[A-Z])?$', code):
+        # 美股：1-5个大写字母（可能包含 '.' 或 '-'），直接返回
+        if re.match(r'^[A-Z]{1,5}([.\-][A-Z]{1,2})?$', code):
             logger.debug(f"识别为美股代码: {code}")
             return code
 
@@ -158,7 +158,10 @@ class YfinanceFetcher(BaseFetcher):
             )
             
             if df.empty:
-                raise DataFetchError(f"Yahoo Finance 未查询到 {stock_code} 的数据")
+                raise DataFetchError(
+                    f"Yahoo Finance 未查询到 {stock_code} (yfinance代码: {yf_code}) 的数据，"
+                    f"可能是小盘股/新上市股票或代码格式不正确，将尝试其他数据源"
+                )
             
             return df
             
@@ -297,13 +300,13 @@ class YfinanceFetcher(BaseFetcher):
     def _is_us_stock(self, stock_code: str) -> bool:
         """
         判断代码是否为美股
-        
+
         美股代码规则：
         - 1-5个大写字母，如 'AAPL', 'TSLA'
-        - 可能包含 '.'，如 'BRK.B'
+        - 可能包含 '.' 或 '-'，如 'BRK.B'、'BRK-B'
         """
         code = stock_code.strip().upper()
-        return bool(re.match(r'^[A-Z]{1,5}(\.[A-Z])?$', code))
+        return bool(re.match(r'^[A-Z]{1,5}([.\-][A-Z]{1,2})?$', code))
 
     def get_realtime_quote(self, stock_code: str) -> Optional[UnifiedRealtimeQuote]:
         """
